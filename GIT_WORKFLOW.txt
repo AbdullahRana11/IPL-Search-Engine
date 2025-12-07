@@ -1,0 +1,135 @@
+# Complete Git Push Workflow
+# This document shows ALL files that need to be committed and pushed to GitHub
+
+## IMPORTANT: First, add .gitignore to exclude large files
+
+# Create .gitignore (Already created!)
+git add .gitignore
+git commit -m "chore: add gitignore to exclude generated data and large files"
+
+## ------------------------------------------------------------
+## Huzaifa Sohail's Commits (Backend Implementation)
+## ------------------------------------------------------------
+
+# Commit 1: Football dataset processing
+git add backend/src/document_processor.py
+git commit -m "feat: implement DocumentProcessor for Football dataset
+
+- Added process_football_documents method to index FIFA WC 2022 data
+- Implemented image discovery logic for nested directory structure
+- Pre-scan player folders to efficiently map names to image paths"
+
+# Commit 2: Football image path fix
+# (Same file, different logical change)
+git commit -m "fix: correct image path resolution for football players
+
+- Handle nested structure: Group/Country/Player folders
+- Strip 'Images_' prefix from folder names for matching
+- Add fuzzy matching for player names with special characters"
+
+# Commit 3: Season stats generation
+# (Same file, another feature)
+git commit -m "feat: generate and index season statistics
+
+- Implement generate_season_stats to calculate Orange/Purple Caps
+- Aggregate match-level stats to season-level achievements
+- Create searchable documents for top scorers and wicket-takers"
+
+# Commit 4: Main pipeline integration
+git add backend/main.py
+git commit -m "feat: integrate football and stats generation into main pipeline
+
+- Add football document processing step after IPL processing
+- Call generate_season_stats to create aggregated stats documents
+- Update documents list after each processing step"
+
+## ------------------------------------------------------------
+## Abdullah Rana's Commits (Search & Documentation)
+## ------------------------------------------------------------
+
+# Commit 1: Combined search implementation
+git add backend/src/search_engine.py
+git commit -m "feat: implement combined search with UNION logic
+
+- Add search_combined method to SearchEngine class
+- Support ' and ' separator for multi-dataset queries
+- Merge and deduplicate results from IPL and Football datasets"
+
+# Commit 2: Search CLI updates
+git add backend/search.py
+git commit -m "feat: update search CLI for new document types
+
+- Add display logic for season_stats documents
+- Differentiate between IPL, Football, and Stats results
+- Show relevant metadata (image count for football, descriptions for stats)"
+
+# Commit 3: Documentation updates
+git add README.md
+git commit -m "docs: add verification steps for barrels and new features
+
+- Document barrel implementation verification process
+- Provide test queries for season stats and football data
+- Include expected outputs and project statistics
+- Add instructions for testing combined search"
+
+# Optional: If HOW_TO_RUN.md exists and was updated
+git add HOW_TO_RUN.md
+git commit -m "docs: update run instructions for new features"
+
+## ------------------------------------------------------------
+## Push Everything to GitHub
+## ------------------------------------------------------------
+
+git push origin main
+
+## ------------------------------------------------------------
+## WHAT GETS PUSHED vs WHAT DOESN'T
+## ------------------------------------------------------------
+
+# ✅ WILL BE PUSHED (Source Code):
+# - backend/src/document_processor.py
+# - backend/src/search_engine.py
+# - backend/src/barrel_manager.py
+# - backend/src/forward_index_builder.py
+# - backend/src/inverted_index_builder.py
+# - backend/src/lexicon_builder.py
+# - backend/src/preprocessor.py
+# - backend/main.py
+# - backend/search.py
+# - backend/tests/test_*.py
+# - README.md
+# - HOW_TO_RUN.md
+# - .gitignore
+
+# ❌ WILL NOT BE PUSHED (Excluded by .gitignore):
+# - lexicon_data/ (generated files, ~20MB)
+# - forward_index_data/ (generated files, ~100MB)
+# - inverted_index_data/ (generated files, ~500MB)
+# - metadata_data/ (generated files, ~10MB)
+# - Dataset/ (too large for GitHub, users download separately)
+# - __pycache__/ (Python cache)
+# - *.pkl files (pickle/serialized data)
+
+## ------------------------------------------------------------
+## VERIFICATION
+## ------------------------------------------------------------
+
+# After pushing, check GitHub to ensure:
+# 1. All .py source files are present
+# 2. README.md and documentation is updated
+# 3. No large data files (.pkl, Dataset/) were accidentally pushed
+# 4. Total repository size should be < 10 MB
+
+## ------------------------------------------------------------
+## NOTE FOR DATASET
+## ------------------------------------------------------------
+
+# The Dataset folder is excluded from GitHub because:
+# - IPL dataset: ~100 MB
+# - Football dataset: ~500 MB with images
+# 
+# Users should download datasets separately and place them in:
+# - Dataset/IPL/all_season_details.csv
+# - Dataset/Football 2/
+#
+# Consider adding dataset download instructions to README.md
