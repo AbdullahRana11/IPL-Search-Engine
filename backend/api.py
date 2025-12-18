@@ -25,8 +25,7 @@ app.add_middleware(
 )
 
 # Mount Dataset directory for serving images
-# Assuming api.py is in backend/ and Dataset is in ../Dataset
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATASET_DIR = os.path.join(BASE_DIR, 'Dataset')
 
 if os.path.exists(DATASET_DIR):
@@ -49,9 +48,8 @@ async def startup_event():
     print("Initializing API...")
     
     # Initialize Search Engine
-    # Index data is in the project root (.. from backend/)
-    # We need to use absolute path to be safe
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Index data is now inside the backend directory
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     search_engine = SearchEngine(output_dir=base_dir)
     
     # Initialize Autocomplete
