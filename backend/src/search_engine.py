@@ -34,6 +34,25 @@ class SearchEngine:
         
         self.load_indices()
         
+        # Synonym mappings for better search results
+        self.synonyms = {
+            "top run scorer": "orange cap",
+            "highest run scorer": "orange cap",
+            "most runs": "orange cap",
+            "top wicket taker": "purple cap",
+            "highest wicket taker": "purple cap",
+            "most wickets": "purple cap",
+            "top scorer": "orange cap", # Assuming cricket context usually
+        }
+        
+    def _preprocess_query(self, query):
+        """Apply synonym mappings to the query."""
+        query_lower = query.lower()
+        for phrase, replacement in self.synonyms.items():
+            if phrase in query_lower:
+                query_lower = query_lower.replace(phrase, replacement)
+        return query_lower
+        
     def load_indices(self):
         """Load all necessary indices and metadata."""
         print("Loading search engine indices...")
@@ -66,37 +85,51 @@ class SearchEngine:
                 results.append(self.metadata_map[doc_id])
         return results
         
-    def search_single(self, query):
+    def search_single(self, query, max_results=100):
         """
         Search for a single word.
         
         Args:
             query: Single word string
+            max_results: Maximum number of results to return
             
         Returns:
             List of document metadata
         """
+        # Apply synonyms (though less likely to match phrases here)
+        query = self._preprocess_query(query)
+        
         word_id = self._get_word_id(query)
         if word_id is None:
             return []
             
         doc_ids = self.barrel_manager.get_documents_for_word(word_id)
+        
+        # Limit results early to avoid processing too many documents
+        if len(doc_ids) > max_results * 2:
+            doc_ids = doc_ids[:max_results * 2]
+        
         results = self._get_doc_metadata(doc_ids)
         
         # Rank results
         term_doc_counts = {query.lower(): len(doc_ids)}
-        return self.ranker.rank_results(results, query, len(self.metadata), term_doc_counts)
+        ranked = self.ranker.rank_results(results, query, len(self.metadata), term_doc_counts)
+        return ranked[:max_results]
         
-    def search_multi(self, query):
+    def search_multi(self, query, max_results=100):
         """
         Search for multiple words (AND logic).
         
         Args:
             query: Space-separated words
+            max_results: Maximum number of results to return
             
         Returns:
             List of document metadata
         """
+        # Apply synonyms
+        query = self._preprocess_query(query)
+        
         words = query.split()
         if not words:
             return []
@@ -126,70 +159,106 @@ class SearchEngine:
             if not result_doc_ids:
                 break
                 
-        results = self._get_doc_metadata(list(result_doc_ids))
+        # Limit results early
+        doc_id_list = list(result_doc_ids)
+        if len(doc_id_list) > max_results * 2:
+            doc_id_list = doc_id_list[:max_results * 2]
+        
+        results = self._get_doc_metadata(doc_id_list)
         
         # Rank results
-        return self.ranker.rank_results(results, query, len(self.metadata), term_doc_counts)
+        ranked = self.ranker.rank_results(results, query, len(self.metadata), term_doc_counts)
+        return ranked[:max_results]
 
-    def search_combined(self, query):
+    def search_combined(self, query, max_results=100):
         """
-        Search for multiple queries separated by ' and '.
+        Search for multiple queries separated by ',' or ' and '.
         Results are combined (UNION).
         
         Args:
-            query: Query string containing ' and '
+            query: Query string containing ',' or ' and '
+            max_results: Maximum number of results to return
             
         Returns:
             List of document metadata
         """
-        # Split by ' and ' (case-insensitive)
-        parts = query.lower().split(' and ')
+        # Apply synonyms
+        query = self._preprocess_query(query)
         
-        all_results = []
-        seen_doc_ids = set()
+        # Normalize separators: replace ' and ' with ',' for easier splitting
+        normalized_query = query.lower().replace(' and ', ',')
+        parts = [p.strip() for p in normalized_query.split(',') if p.strip()]
         
-        # Collect all terms for ranking context
+        if not parts:
+            return []
+            
+        all_results_map = {} # doc_id -> doc metadata
+        doc_matched_terms = {} # doc_id -> set of terms that matched
         all_terms = set()
         
+        # Stop words to ignore in intersections
+        stop_words = {'vs', 'and', 'the', 'in', 'of', 'at', 'with', 'a', 'an', 'is', 'are'}
+        
+        # Limit per part to avoid overwhelming the ranker
+        limit_per_part = max_results * 2
+        
         for part in parts:
-            part = part.strip()
-            if not part:
-                continue
-            
-            all_terms.update(part.split())
-                
             # Search for this part
-            # If it has multiple words, use search_multi, else search_single
-            # We use the internal methods but without ranking yet to avoid double ranking
+            part_matched_ids = set()
+            part_terms = set()
+            
             if ' ' in part:
-                # Inline search_multi logic to get raw docs
-                words = part.split()
-                if not words: continue
+                # Multi-word search (AND logic within part)
+                words = [w for w in part.split() if w not in stop_words]
+                if not words:
+                    # If all words were stop words, use original words
+                    words = part.split()
+                    
+                part_terms.update(words)
+                all_terms.update(words)
                 
-                w_id = self._get_word_id(words[0])
-                if w_id is None: continue
-                res_ids = set(self.barrel_manager.get_documents_for_word(w_id))
-                
-                for w in words[1:]:
-                    w_id = self._get_word_id(w)
-                    if w_id is None: 
+                # Get intersection of doc IDs
+                res_ids = None
+                for word in words:
+                    w_id = self._get_word_id(word)
+                    if w_id is None:
+                        # If a non-stop word is missing, this part has no results
                         res_ids = set()
                         break
-                    res_ids.intersection_update(set(self.barrel_manager.get_documents_for_word(w_id)))
+                    
+                    word_docs = set(self.barrel_manager.get_documents_for_word(w_id))
+                    if res_ids is None:
+                        res_ids = word_docs
+                    else:
+                        res_ids.intersection_update(word_docs)
+                    
+                    if not res_ids:
+                        break
                 
-                results = self._get_doc_metadata(list(res_ids))
+                if res_ids:
+                    part_matched_ids = res_ids
             else:
-                # Inline search_single logic
+                # Single word search
+                part_terms.add(part)
+                all_terms.add(part)
                 w_id = self._get_word_id(part)
-                if w_id is None: continue
-                res_ids = self.barrel_manager.get_documents_for_word(w_id)
-                results = self._get_doc_metadata(res_ids)
+                if w_id is not None:
+                    part_matched_ids = set(self.barrel_manager.get_documents_for_word(w_id))
+            
+            # Limit IDs from this part before fetching metadata
+            id_list = list(part_matched_ids)
+            if len(id_list) > limit_per_part:
+                id_list = id_list[:limit_per_part]
                 
-            # Add unique results
+            results = self._get_doc_metadata(id_list)
             for doc in results:
-                if doc['doc_id'] not in seen_doc_ids:
-                    all_results.append(doc)
-                    seen_doc_ids.add(doc['doc_id'])
+                doc_id = doc['doc_id']
+                if doc_id not in all_results_map:
+                    all_results_map[doc_id] = doc
+                    doc_matched_terms[doc_id] = set()
+                
+                # Track which terms from THIS part matched this doc
+                doc_matched_terms[doc_id].update(part_terms)
         
         # Calculate term counts for all terms found
         term_doc_counts = {}
@@ -201,4 +270,18 @@ class SearchEngine:
                 term_doc_counts[term] = 0
                     
         # Rank combined results
-        return self.ranker.rank_results(all_results, query.replace(' and ', ' '), len(self.metadata), term_doc_counts)
+        docs_to_rank = []
+        for doc_id, doc in all_results_map.items():
+            doc_copy = doc.copy()
+            doc_copy['_matched_terms'] = doc_matched_terms[doc_id]
+            docs_to_rank.append(doc_copy)
+            
+        ranking_query = " ".join(parts)
+        ranked = self.ranker.rank_results(docs_to_rank, ranking_query, len(self.metadata), term_doc_counts)
+        
+        # Clean up temporary field
+        for res in ranked:
+            if '_matched_terms' in res:
+                del res['_matched_terms']
+                
+        return ranked[:max_results]
