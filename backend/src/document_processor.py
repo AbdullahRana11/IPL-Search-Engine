@@ -116,7 +116,8 @@ class DocumentProcessor:
                 'home_team': row.get('home_team', 'N/A'),
                 'away_team': row.get('away_team', 'N/A'),
                 'over': row.get('over', 'N/A'),
-                'ball': row.get('ball', 'N/A')
+                'ball': row.get('ball', 'N/A'),
+                'description': doc_text[:200] + "..."
             })
             
             # Progress indicator
@@ -237,6 +238,181 @@ class DocumentProcessor:
             
         print(f"Processed {count} football documents")
         return count
+
+    def generate_player_career_stats(self):
+        """
+        Generates aggregated career statistics for each player and adds them as documents.
+        """
+        print("Generating player career stats...")
+        
+        try:
+            # Load batting and bowling cards
+            dataset_dir = os.path.dirname(self.dataset_path)
+            batting_path = os.path.join(dataset_dir, 'all_season_batting_card.csv')
+            bowling_path = os.path.join(dataset_dir, 'all_season_bowling_card.csv')
+            
+            if not os.path.exists(batting_path) or not os.path.exists(bowling_path):
+                print(f"Warning: Batting/Bowling cards not found at {batting_path} or {bowling_path}")
+                return
+
+            batting_df = pd.read_csv(batting_path, low_memory=False)
+            bowling_df = pd.read_csv(bowling_path, low_memory=False)
+            
+            # --- Batting Stats ---
+            # Group by player (using 'name' column)
+            batting_stats = batting_df.groupby('name').agg({
+                'runs': 'sum',
+                'ballsFaced': 'sum',
+                'fours': 'sum',
+                'sixes': 'sum'
+            }).reset_index()
+            
+            # Calculate centuries and fifties
+            # Group by match and player to get scores per innings
+            match_scores = batting_df.groupby(['match_id', 'name'])['runs'].sum().reset_index()
+            centuries = match_scores[match_scores['runs'] >= 100].groupby('name').size().reset_index(name='centuries')
+            fifties = match_scores[(match_scores['runs'] >= 50) & (match_scores['runs'] < 100)].groupby('name').size().reset_index(name='fifties')
+            
+            # Merge stats
+            batting_stats = batting_stats.merge(centuries, on='name', how='left').fillna(0)
+            batting_stats = batting_stats.merge(fifties, on='name', how='left').fillna(0)
+            
+            # --- Bowling Stats ---
+            bowling_stats = bowling_df.groupby('name').agg({
+                'wickets': 'sum',
+                'overs': 'sum',
+                'conceded': 'sum' # runs conceded
+            }).reset_index()
+            
+            # Merge all into a single player stats dict
+            players = {}
+            
+            for _, row in batting_stats.iterrows():
+                name = row['name']
+                players[name] = {
+                    'name': name,
+                    'runs': int(row['runs']),
+                    'balls_faced': int(row['ballsFaced']),
+                    'fours': int(row['fours']),
+                    'sixes': int(row['sixes']),
+                    'centuries': int(row['centuries']),
+                    'fifties': int(row['fifties']),
+                    'wickets': 0
+                }
+                
+            for _, row in bowling_stats.iterrows():
+                name = row['name']
+                if name not in players:
+                    players[name] = {'name': name, 'runs': 0, 'wickets': 0}
+                
+                players[name]['wickets'] = int(row['wickets'])
+                players[name]['overs_bowled'] = float(row['overs'])
+                players[name]['runs_conceded'] = int(row['conceded'])
+                
+            # Create documents
+            for name, stats in players.items():
+                # Create a rich text representation
+                doc_text = f"{name} career stats runs {stats.get('runs', 0)} wickets {stats.get('wickets', 0)} centuries {stats.get('centuries', 0)} fifties {stats.get('fifties', 0)}"
+                
+                tokens = self.preprocessor.preprocess(doc_text)
+                current_doc_id = len(self.documents)
+                
+                self.documents.append({
+                    'doc_id': current_doc_id,
+                    'tokens': tokens,
+                    'raw_text': doc_text
+                })
+                
+                self.doc_metadata.append({
+                    'doc_id': current_doc_id,
+                    'type': 'player_career_stats',
+                    'player_name': name,
+                    'stats': stats,
+                    'description': f"{name} Career: {stats.get('runs', 0)} Runs, {stats.get('wickets', 0)} Wickets"
+                })
+                
+            print(f"Generated career stats for {len(players)} players")
+            
+        except Exception as e:
+            print(f"Error generating player career stats: {e}")
+
+    def generate_player_season_stats(self):
+        """
+        Generates aggregated statistics for each player per season.
+        """
+        print("Generating player season stats...")
+        
+        try:
+            dataset_dir = os.path.dirname(self.dataset_path)
+            batting_path = os.path.join(dataset_dir, 'all_season_batting_card.csv')
+            bowling_path = os.path.join(dataset_dir, 'all_season_bowling_card.csv')
+            
+            if not os.path.exists(batting_path) or not os.path.exists(bowling_path):
+                return
+
+            batting_df = pd.read_csv(batting_path, low_memory=False)
+            bowling_df = pd.read_csv(bowling_path, low_memory=False)
+            
+            # --- Batting per Season ---
+            batting_season = batting_df.groupby(['season', 'name'])['runs'].sum().reset_index()
+            
+            # --- Bowling per Season ---
+            bowling_season = bowling_df.groupby(['season', 'name'])['wickets'].sum().reset_index()
+            
+            # Process Batting
+            for _, row in batting_season.iterrows():
+                season = int(row['season'])
+                name = row['name']
+                runs = int(row['runs'])
+                
+                doc_text = f"{name} {season} stats runs {runs}"
+                tokens = self.preprocessor.preprocess(doc_text)
+                current_doc_id = len(self.documents)
+                
+                self.documents.append({
+                    'doc_id': current_doc_id,
+                    'tokens': tokens,
+                    'raw_text': doc_text
+                })
+                
+                self.doc_metadata.append({
+                    'doc_id': current_doc_id,
+                    'type': 'player_season_stats',
+                    'player_name': name,
+                    'season': season,
+                    'runs': runs,
+                    'description': f"{name} in {season}: {runs} Runs"
+                })
+                
+            # Process Bowling
+            for _, row in bowling_season.iterrows():
+                season = int(row['season'])
+                name = row['name']
+                wickets = int(row['wickets'])
+                
+                doc_text = f"{name} {season} stats wickets {wickets}"
+                tokens = self.preprocessor.preprocess(doc_text)
+                current_doc_id = len(self.documents)
+                
+                self.documents.append({
+                    'doc_id': current_doc_id,
+                    'tokens': tokens,
+                    'raw_text': doc_text
+                })
+                
+                self.doc_metadata.append({
+                    'doc_id': current_doc_id,
+                    'type': 'player_season_stats',
+                    'player_name': name,
+                    'season': season,
+                    'wickets': wickets,
+                    'description': f"{name} in {season}: {wickets} Wickets"
+                })
+                
+            print(f"Generated season stats for {len(batting_season) + len(bowling_season)} player-seasons")
+            
+        except Exception as e:
+            print(f"Error generating player season stats: {e}")
 
     def generate_season_stats(self):
         """

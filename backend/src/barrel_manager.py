@@ -6,6 +6,7 @@ Handles partitioning of the inverted index into smaller chunks (barrels).
 import os
 import pickle
 from collections import defaultdict
+from functools import lru_cache
 
 
 class BarrelManager:
@@ -111,9 +112,33 @@ class BarrelManager:
             print(f"Error loading barrel {barrel_id}: {e}")
             return {}
 
+    @staticmethod
+    @lru_cache(maxsize=16)
+    def _load_barrel_cached(barrel_path):
+        """
+        Load a barrel from disk with caching.
+        Static method to allow LRU caching.
+        
+        Args:
+            barrel_path: Full path to barrel file
+            
+        Returns:
+            Dictionary mapping word_id -> list of doc_ids
+        """
+        if not os.path.exists(barrel_path):
+            return {}
+            
+        try:
+            with open(barrel_path, 'rb') as f:
+                return pickle.load(f)
+        except Exception as e:
+            print(f"Error loading barrel {barrel_path}: {e}")
+            return {}
+
     def get_documents_for_word(self, word_id):
         """
         Get documents for a specific word by loading the appropriate barrel.
+        Uses LRU cache to avoid repeated disk I/O.
         
         Args:
             word_id: Word ID to look up
@@ -122,5 +147,6 @@ class BarrelManager:
             List of document IDs
         """
         barrel_id = self.get_barrel_id(word_id)
-        barrel_data = self.load_barrel(barrel_id)
+        barrel_path = os.path.join(self.output_dir, f"barrel_{barrel_id}.pkl")
+        barrel_data = self._load_barrel_cached(barrel_path)
         return barrel_data.get(word_id, [])

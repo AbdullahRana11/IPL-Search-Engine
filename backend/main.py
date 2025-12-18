@@ -53,6 +53,11 @@ def build_indices(dataset_path, max_docs=None, output_dir='.'):
 
     # Generate season stats (Orange Cap, Purple Cap)
     processor.generate_season_stats()
+    
+    # Generate player stats (Career and Season-wise)
+    processor.generate_player_career_stats()
+    processor.generate_player_season_stats()
+    
     documents = processor.get_documents() # Update documents list again
 
     
