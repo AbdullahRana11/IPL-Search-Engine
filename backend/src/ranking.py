@@ -27,8 +27,8 @@ class Ranker:
             'player_career_stats': 5.0,  # Highest priority for "Kohli stats"
             'player_season_stats': 3.0,  # High priority for "Kohli 2022"
             'season_stats': 2.0,         # Medium priority for "Orange Cap 2023"
-            'football': 1.0,
-            'match': 1.0                 # Standard priority
+            'football': 5.0,             # Reduced from 20.0 to avoid overshadowing name matches
+            'match': 0.1                 # Even lower priority for raw match data
         }
     
     def calculate_tf_idf(self, term_freq, doc_len, doc_count, total_docs):
@@ -54,63 +54,50 @@ class Ranker:
 
     def score_document(self, doc_metadata, query_terms, doc_term_freqs, total_docs, term_doc_counts):
         """
-        Score a single document against the query.
-        
-        Args:
-            doc_metadata: Metadata dictionary for the document
-            query_terms: List of query terms
-            doc_term_freqs: Dict mapping term -> frequency in this doc
-            total_docs: Total number of documents
-            term_doc_counts: Dict mapping term -> number of docs containing it
-            
-        Returns:
-            Float score
+        Score a single document against the query using additive scoring.
         """
         score = 0.0
         
-        # 1. TF-IDF Score
-        # We approximate doc length as sum of frequencies for simplicity, 
-        # or use a standard average length if not available.
-        # Here we'll just sum the TF-IDF for each query term present.
+        # 1. TF-IDF Score (Base relevance)
+        tfidf_sum = 0
         for term in query_terms:
             tf = doc_term_freqs.get(term, 0)
             if tf > 0:
                 doc_count = term_doc_counts.get(term, 0)
-                score += self.calculate_tf_idf(tf, 100, doc_count, total_docs) # Assumed avg doc len 100
+                tfidf_sum += self.calculate_tf_idf(tf, 100, doc_count, total_docs)
         
-        # 2. Document Type Boost
+        score += tfidf_sum
+        
+        # 2. Document Type Boost (Additive)
         doc_type = doc_metadata.get('type', 'match')
-        type_boost = self.type_boosts.get(doc_type, 1.0)
-        score *= type_boost
+        type_boost = {
+            'player_career_stats': 50.0,
+            'player_season_stats': 30.0,
+            'season_stats': 20.0,
+            'football': 10.0,
+            'match': 1.0
+        }.get(doc_type, 0.0)
+        score += type_boost
         
-        # 3. Field Matching Boost
-        # If query terms appear in specific metadata fields, boost the score
-        field_score = 0
+        # 3. Field Matching Boost (High priority)
         query_str = " ".join(query_terms).lower()
-        
-        # Check player name match
         player_name = str(doc_metadata.get('player_name', '')).lower()
+        
         if player_name:
             if query_str == player_name:
-                field_score += 10.0  # Exact name match
+                score += 1000.0  # Absolute priority for exact name match
             elif query_str in player_name:
-                field_score += 5.0   # Partial name match
-            elif any(term in player_name for term in query_terms):
-                field_score += 2.0   # Term match
+                score += 500.0   # High priority for partial name match
+            else:
+                # Check if any query term matches player name
+                matches = sum(1 for term in query_terms if term in player_name)
+                score += 100.0 * matches
                 
-        # Check season match
-        season = str(doc_metadata.get('season', ''))
-        if season and season in query_terms:
-            field_score += 3.0
-            
-        score += field_score
-        
-        # 4. Recency Boost (for seasons)
-        if season and season.isdigit():
-            season_year = int(season)
-            # Boost recent seasons slightly
-            if season_year >= 2023:
-                score *= 1.1
+        # Team match boosts
+        home_team = str(doc_metadata.get('home_team', '')).lower()
+        away_team = str(doc_metadata.get('away_team', '')).lower()
+        teams_in_query = [t for t in query_terms if t in [home_team, away_team]]
+        score += 50.0 * len(teams_in_query)
         
         return score
 
@@ -128,26 +115,40 @@ class Ranker:
             Ranked list of results
         """
         query_terms = query.lower().split()
-        ranked_results = []
         
+        # Calculate scores without copying documents
+        scored_docs = []
         for doc in results:
-            # In a real system, we'd have term frequencies from the forward index.
-            # For now, we'll estimate or require them to be passed.
-            # Since we don't have easy access to forward index here without loading it,
-            # we'll rely more on metadata matching for this implementation.
+            # Use matched terms if available (from search_combined)
+            matched_terms = doc.get('_matched_terms', query_terms)
             
-            # Mock term freqs based on metadata matching for now
-            # (Real implementation would pass this from search engine)
-            mock_freqs = {term: 1 for term in query_terms} 
+            # For ranking, we use actual term presence in metadata or raw text
+            mock_freqs = {term: 1 for term in matched_terms} 
+            score = self.score_document(doc, list(matched_terms), mock_freqs, total_docs, term_doc_counts)
+            scored_docs.append((score, doc))
             
-            score = self.score_document(doc, query_terms, mock_freqs, total_docs, term_doc_counts)
-            
-            # Add score to doc for debugging
+        # Sort by score descending
+        scored_docs.sort(key=lambda x: x[0], reverse=True)
+        
+        # Only copy top results with scores
+        ranked_results = []
+        for score, doc in scored_docs:
             doc_with_score = doc.copy()
             doc_with_score['score'] = score
             ranked_results.append(doc_with_score)
             
-        # Sort by score descending
-        ranked_results.sort(key=lambda x: x['score'], reverse=True)
+        # Aggressive filtering to remove noise
+        if ranked_results:
+            top_score = ranked_results[0]['score']
+            
+            # If we have a very strong match, be more aggressive
+            if top_score > 30.0:
+                # Keep results that are at least 50% of the top score
+                threshold = top_score * 0.5
+                ranked_results = [doc for doc in ranked_results if doc['score'] >= threshold]
+            elif top_score > 10.0:
+                # Keep results that are at least 30% of the top score
+                threshold = top_score * 0.3
+                ranked_results = [doc for doc in ranked_results if doc['score'] >= threshold]
         
         return ranked_results
