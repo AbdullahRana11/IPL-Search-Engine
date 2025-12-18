@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pydantic
+requests
+python-multipart
+python-pptx
+Pillow
+lxml
+XlsxWriter
+typing-extensions
